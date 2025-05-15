@@ -4,7 +4,9 @@ import matplotlib.pyplot as plt
 from matplotlib.pyplot import cm
 import math
 
+## PARAMETER ESTIMATION ##
 
+## Dichotomous Rasch ##
 
 def perc_correct(person):
     total_correct = sum(person)
@@ -194,8 +196,179 @@ def dichotomous(data):
     
     return (difficulty_df, ability_df)
 
+## RSM model ##
 
-### For Rasch visualizations
+def get_denominator(row, column, ability_par, difficulty_par, thresholds, response_options):
+    #This is a helper function to compute the denominator for calculating category probabilities
+
+    denominator = []
+    for category in range(response_options):
+
+        result =  np.exp(category*(ability_par[row]-difficulty_par[column])-thresholds[category])
+
+        denominator.append(result)
+
+    return sum(denominator)
+
+def RSM(dataframe, difficulty_par, ability_par, thresholds):
+
+    #This is the main RSM function that is later used iteratively
+    response_options = dataframe.nunique().max() 
+    rows = dataframe.shape[0]
+    columns = dataframe.shape[1]
+
+    #Get category probabilities
+
+    Categories_prob = []
+    for category in range(response_options):
+        name = f'prob{category}'
+        name = pd.DataFrame(np.zeros((rows, columns)))
+
+        for row in range(name.shape[0]):
+            for column in range(name.shape[1]):
+
+                denominator = get_denominator(row, column, ability_par, difficulty_par, thresholds, response_options)
+
+                name.iloc[row,column] = np.exp(category*(ability_par[row]-difficulty_par[column])-thresholds[category]) / denominator
+
+        Categories_prob.append(name)
+
+    #Compute expected scores
+    
+    Expected = []
+
+    for category in range(response_options):
+        
+        cat_times_prob = category*Categories_prob[category]
+        Expected.append(cat_times_prob)
+
+    Expected_values = sum(Expected) #Correction for summing the datasets
+
+    #Compute residuals
+        
+    Residuals = pd.DataFrame(np.zeros((rows, columns)))
+    for row in range(rows):
+        for column in range(columns):
+            residual = dataframe.iloc[row, column] - Expected_values.iloc[row, column]
+            Residuals.iloc[row,column] = residual
+
+    #Compute variance
+    
+    Variance = pd.DataFrame(np.zeros((rows, columns)))
+    for row in range(dataframe.shape[0]):
+        for column in range(dataframe.shape[1]):
+            Variance1 = []
+            Variance2 = []
+            for category in range(response_options):
+                Variance1cat = category**2 * Categories_prob[category].iloc[row, column]
+
+                Variance2cat = category * Categories_prob[category].iloc[row, column]
+
+                Variance1.append(Variance1cat)
+                Variance2.append(Variance2cat)
+
+            Variance1sum = sum(Variance1)
+            Variance2sum = sum(Variance2)
+            Variance.iloc[row, column] = Variance1sum - Variance2sum**2
+    
+    #Compute standardize residuals    
+
+    Standardize_residuals = Residuals / np.sqrt(Variance)
+    #Get Results
+
+    result = [Categories_prob, Expected_values, Residuals, Variance, Standardize_residuals]
+
+    return(result)
+
+    #per item category for category 0 is 0
+
+def polytomousRasch(df):
+    response_options = df.nunique().max() 
+
+    rows = df.shape[0]
+    columns = df.shape[1]
+
+    difficulty_par = np.zeros(columns)
+    ability_par = np.zeros(rows)
+    thresholds = np.zeros(response_options)
+
+
+    iterations = 0
+
+    while iterations < 10:
+        
+        iterations += 1
+
+        result = RSM(df, difficulty_par, ability_par, thresholds)
+
+        Categories_prob = result[0]
+
+        Expected_values = result[1]
+
+        Residuals = result[2] 
+
+        Variance = result[3]  
+
+        Standardize_residuals = result[4]
+
+        for row in range(df.shape[0]):
+
+            Observed_score = sum(df.iloc[row,])
+            Expected_score = sum(Expected_values.iloc[row,])
+            Variance_score = sum(Variance.iloc[row,])
+            ability = ability_par[row] + (Observed_score - Expected_score) / Variance_score
+            ability_par[row] = ability
+        
+
+        for column in range(df.shape[1]):
+
+            Observed_score = sum(df.iloc[:,column])
+            Expected_score = sum(Expected_values.iloc[:,column])
+            Variance_score = sum(Variance.iloc[:,column])
+            difficulty = difficulty_par[column] - (Observed_score - Expected_score) / Variance_score
+            
+            difficulty_par[column] = difficulty
+
+        for response in range(1, response_options):
+            observed_frequency_prev = (df == response - 1).sum().sum()
+            observed_frequency = (df == response).sum().sum()
+            
+            expected_frequency_prev = Categories_prob[response - 1].sum().sum()
+            expected_frequency = Categories_prob[response].sum().sum()
+            
+            threshold = thresholds[response] + np.log(observed_frequency_prev/observed_frequency) - np.log(expected_frequency_prev/expected_frequency)
+            thresholds[response] = threshold
+            mean_threshold = np.mean(thresholds[1:])
+            thresholds[0] = 0
+            for i in range(1, len(thresholds)):
+
+                thresholds[i] = thresholds[i] - mean_threshold
+    
+    #Format Result
+                
+    difficulty_estimates = pd.DataFrame({
+    "Item": df.columns,             # Or use range(len(difficulty_par)) if no labels
+    "Estimate": difficulty_par})
+
+    ability_estimates = pd.DataFrame({
+    "Person": df.index,             # Or use range(len(difficulty_par)) if no labels
+    "Estimate": ability_par})
+
+    labels = [f"Threshold {i}" for i in range(len(thresholds))]
+
+    df_thresholds = pd.DataFrame({
+    "Threshold": labels,
+    "Estimate": thresholds
+    })
+
+    difficulty_estimates = difficulty_estimates.set_index("Item")
+
+    return(ability_estimates, difficulty_estimates, df_thresholds)
+
+
+## VISUALIZATIONS ##
+
+## Dichotomous model ##
 
 def sigmoid(x):
   return 1 / (1 + np.exp(-x))
@@ -286,12 +459,37 @@ def TIF(items):
     # Show the plot
     plt.show() 
 
+def ICC_polytomous(thresholds, difficulty, response_options, item_index=0):
+    """
+    Plot Item Category Characteristic Curves (ICCs) for a polytomous Rasch model item.
+    """
+    theta = np.linspace(-4, 4, 500)  # Range of ability levels
+    m = response_options - 1
+    probs = np.zeros((m + 1, len(theta)))
 
+    for k in range(m + 1):
+        numerators = np.exp(np.sum([theta - difficulty - thresholds[j] for j in range(k)], axis=0)) if k > 0 else np.ones(len(theta))
+        denominators = np.sum([np.exp(np.sum([theta - difficulty - thresholds[j] for j in range(l)], axis=0)) if l > 0 else np.ones(len(theta)) for l in range(m + 1)], axis=0)
+        probs[k, :] = numerators / denominators
 
-def generate_sample(num_people, num_items):
+    colors = cm.viridis(np.linspace(0, 1, m + 1))
+    for k in range(m + 1):
+        plt.plot(theta, probs[k, :], label=f"Category {k}", color=colors[k])
+
+    plt.title(f"Item Category Characteristic Curves ({item_index})")
+    plt.xlabel("Theta (Ability)")
+    plt.ylabel("Probability")
+    plt.ylim(0, 1.05)
+    plt.grid(True)
+    plt.legend()
+    plt.show()
+
+## MISC ##
+
+def generate_sample(num_people, num_items, response_options):
     np.random.seed(42)  # For reproducibility
     # Generate random 0s and 1s for the DataFrame
-    data = np.random.randint(0, 2, size=(num_people, num_items))
+    data = np.random.randint(0, response_options, size=(num_people, num_items))
     # Create the DataFrame
     df = pd.DataFrame(data, columns=[f'Item{i+1}' for i in range(num_items)])
     # Optionally, add row names (people)

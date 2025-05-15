@@ -1,4 +1,4 @@
-from .utils import dichotomous, ICC, IIF, TIF
+from .utils import dichotomous, polytomousRasch, ICC, IIF, TIF, ICC_polytomous
 
 
 class RaschModel:
@@ -6,6 +6,7 @@ class RaschModel:
         self.items = items
         self.itemparameters = None
         self.personparameters = None
+        self.itemthresholds = None
 
     def estimate_parameters(self):
         raise NotImplementedError("This method will be implemented by the subclass")
@@ -35,3 +36,20 @@ class DichotomousRaschModel(RaschModel):
     
     def TIFplot(self):
         TIF(self.itemparameters)
+
+class RatingScaleModel(RaschModel):
+    def estimate_parameters(self):
+        ability_df, difficulty_df, thresholds = polytomousRasch(self.items)
+        self.itemparameters = difficulty_df
+        self.personparameters = ability_df    
+        self.thresholds = thresholds   
+        return (difficulty_df, ability_df, thresholds)
+    
+    def ICCplot(self, item_name):
+        difficulty = self.itemparameters.loc[item_name, "Estimate"] 
+        print(difficulty)
+        print(self.thresholds)
+        ICC_polytomous(thresholds=self.thresholds.iloc[:,1].values,
+                       difficulty=difficulty,
+                       response_options=len(self.thresholds.iloc[:,1].values),
+                       item_index=item_name)

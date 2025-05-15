@@ -1,6 +1,6 @@
 # Rasch Py
 
-Rasch Py is a Python library that helps you implement Rasch models in Python. The 'Model' objects can be employed to output the relevant parameters and visualizations. Alternatively, the individual functions can be used to on already existing Rasch parameter outputs.
+Rasch Py is a Python library that helps you implement Rasch models in Python. The 'Model' objects can be employed to output the relevant parameters and visualizations. Alternatively, the individual functions can be used on already existing Rasch parameter outputs.
 
 # Code overview
 
@@ -16,7 +16,8 @@ We can create an example dataset with **generate_sample()**. When used with exte
 ```python
 num_people = 10  # Number of people (rows)
 num_items = 10    # Number of items (columns)
-df = generate_sample(num_people, num_items)
+response_options = 2
+df = generate_sample(num_people, num_items, response_options)
 print(df)
 ```
 
